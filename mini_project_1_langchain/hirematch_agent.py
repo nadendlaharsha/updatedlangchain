@@ -301,4 +301,4 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    process_candidate_resume(args.resume, auto_approve=args.auto-approve)
+    process_candidate_resume(args.resume, auto_approve=args.auto_approve)
