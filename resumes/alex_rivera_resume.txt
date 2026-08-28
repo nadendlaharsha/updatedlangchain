@@ -1,0 +1,24 @@
+Candidate Name: Alex Rivera
+Email: alex.rivera@ai-talent.org
+Phone: +1 (555) 234-5678
+
+Professional Summary:
+Senior AI & Machine Learning Engineer with 6+ years of experience specializing in Agentic AI Architectures, Python, FastAPI, LangChain, and LLM fine-tuning. Led AI initiatives at CloudTech Solutions, scaling multi-agent production pipelines.
+
+Technical Skills:
+- Languages & Frameworks: Python, FastAPI, PyTorch, LangChain, LangGraph, SQL
+- Cloud & Infrastructure: AWS, Docker, Kubernetes, CI/CD
+- AI Expertise: Multi-Agent Systems, RAG, Prompt Engineering, Function Calling
+
+Work History:
+1. Senior AI Engineer | CloudTech Solutions (2023 - Present)
+   - Architected autonomous customer service agents using LangChain & LangGraph.
+   - Reduced API response latency by 35% through custom middleware.
+2. ML Engineer | DataFlow Systems (2020 - 2023)
+   - Developed structured extraction pipelines for medical records using Pydantic.
+
+Education:
+- B.S. in Computer Science | University of California, Berkeley
+
+Salary Expectations: $135,000 / year
+Availability: Immediate

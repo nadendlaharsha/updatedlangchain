@@ -1,0 +1,20 @@
+Candidate Name: Jordan Lee
+Email: jordan.lee@devhub.com
+Phone: +1 (555) 876-5432
+
+Professional Summary:
+Full-Stack AI Developer with 3 years of experience building web applications and LLM integrations with React, Python, and LangChain. Passionate about developer tools and interactive UI/UX for AI assistants.
+
+Technical Skills:
+- Languages & Frameworks: Python, JavaScript, TypeScript, React, Next.js, FastAPI, LangChain
+- Databases: PostgreSQL, Vector Databases (Chroma, Pinecone)
+
+Work History:
+1. AI Web Developer | InnovateX (2023 - Present)
+   - Integrated LangChain agents into client dashboards.
+
+Education:
+- B.S. in Software Engineering | University of Texas
+
+Salary Expectations: $95,000 / year
+Availability: 2 weeks notice

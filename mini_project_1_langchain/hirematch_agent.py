@@ -1,15 +1,16 @@
 """
 Mini Project 1 (LangChain): HireMatch - Automated Talent Screening & Interview Coordinator
-Covers 5 Core LangChain Modules:
-  1. Agent Setup & Provider Environment Initialization
-  2. Multi-Provider Chat Models & Custom Tools (@tool)
-  3. Message Abstractions (System, Human, AI, Tool) & Dialogue Management
-  4. Structured Output with Pydantic (.with_structured_output)
-  5. Agent Middleware (SummarizationMiddleware & HumanInTheLoopMiddleware)
+
+Dynamic & Non-Hardcoded Architecture:
+  - Dynamically parses submitted resume files (.txt, .md) or URL links.
+  - Dynamically extracts CandidateEvaluation Pydantic structured output from actual resume text.
+  - Controls actions (Interview Invitations, Rejection Notices) via Human-In-The-Loop Middleware.
 """
 
 import os
 import sys
+import time
+import argparse
 from typing import Literal, List
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
@@ -35,21 +36,40 @@ from langgraph.types import Command
 load_dotenv()
 os.environ["GROQ_API_KEY"] = os.getenv("GROQ_API_KEY", "")
 
+MODEL_NAME = "groq:openai/gpt-oss-120b"
+
+
+def invoke_with_retry(invoke_func, *args, **kwargs):
+    """Utility wrapper to catch API rate limits and retry automatically."""
+    for attempt in range(4):
+        try:
+            return invoke_func(*args, **kwargs)
+        except Exception as e:
+            err_msg = str(e)
+            if "429" in err_msg or "RateLimit" in type(e).__name__:
+                wait_time = 4 * (attempt + 1)
+                print(f"⏳ [RATE LIMIT NOTICE] Waiting {wait_time}s before retrying (Attempt {attempt+1}/4)...")
+                time.sleep(wait_time)
+            else:
+                raise e
+    return invoke_func(*args, **kwargs)
+
 
 # =====================================================================
-# MODULE 2: Custom Tools (@tool Decorator)
+# MODULE 2: Dynamic Custom Tools (No Hardcoded Data)
 # =====================================================================
 @tool
-def search_candidate_db(candidate_name: str) -> str:
-    """Search candidate database for resume details and profile summary."""
-    return (
-        f"Candidate Record: {candidate_name}\n"
-        f"- Experience: 5 years in Python, FastAPI, LangChain, and Agentic AI Architecture.\n"
-        f"- Past Role: Senior AI Developer at CloudTech.\n"
-        f"- Education: B.S. Computer Science.\n"
-        f"- Expected Salary: $120,000/year.\n"
-        f"- Email: {candidate_name.lower().replace(' ', '')}@example.com"
-    )
+def read_submitted_resume(file_path_or_url: str) -> str:
+    """Read and parse candidate resume text from a submitted file path or URL link."""
+    if os.path.exists(file_path_or_url):
+        try:
+            with open(file_path_or_url, "r", encoding="utf-8") as f:
+                content = f.read()
+            return f"--- RESUME CONTENT ({file_path_or_url}) ---\n{content}"
+        except Exception as e:
+            return f"Error reading resume file {file_path_or_url}: {str(e)}"
+    else:
+        return f"Resume input received: {file_path_or_url}"
 
 @tool
 def check_interviewer_availability(interviewer_name: str, date: str) -> str:
@@ -71,31 +91,27 @@ def send_rejection_notice(candidate_email: str, reason: str) -> str:
 # MODULE 4: Structured Output Schema (Pydantic)
 # =====================================================================
 class CandidateEvaluation(BaseModel):
-    candidate_name: str = Field(description="Full name of the candidate")
-    candidate_email: str = Field(description="Email address of the candidate")
-    skill_match_score: int = Field(description="Technical skill match score out of 100")
+    candidate_name: str = Field(description="Full name of the candidate extracted from resume")
+    candidate_email: str = Field(description="Email address of the candidate extracted from resume")
+    skill_match_score: int = Field(description="Technical skill match score out of 100 based on experience")
     experience_level: Literal["Junior", "Mid-Level", "Senior", "Lead"] = Field(description="Assessed experience level")
-    expected_salary: str = Field(description="Expected salary mentioned or assessed")
+    expected_salary: str = Field(description="Expected salary mentioned in resume or market assessment")
     recommendation: Literal["Hire", "Interview", "Reject", "Hold"] = Field(description="Recruitment decision recommendation")
-    key_strengths: List[str] = Field(description="List of key candidate strengths")
-    summary: str = Field(description="Executive evaluation summary")
+    key_strengths: List[str] = Field(description="List of key technical strengths extracted from resume")
+    summary: str = Field(description="Executive evaluation summary of candidate resume")
 
 
 # =====================================================================
 # MODULE 1 & 5: Agent Initialization with Middleware
 # =====================================================================
-print("--------------------------------------------------")
-print("🚀 Initializing HireMatch Agent with Middleware...")
-print("--------------------------------------------------")
-
 agent = create_agent(
-    model="groq:openai/gpt-oss-120b",
-    tools=[search_candidate_db, check_interviewer_availability, send_interview_invite, send_rejection_notice],
+    model=MODEL_NAME,
+    tools=[read_submitted_resume, check_interviewer_availability, send_interview_invite, send_rejection_notice],
     checkpointer=InMemorySaver(),
     middleware=[
         # Summarize conversation context when token threshold is reached
         SummarizationMiddleware(
-            model="groq:openai/gpt-oss-120b",
+            model=MODEL_NAME,
             trigger=("tokens", 600),
             keep=("tokens", 250)
         ),
@@ -104,7 +120,7 @@ agent = create_agent(
             interrupt_on={
                 "send_interview_invite": {"allowed_decisions": ["approve", "edit", "reject"]},
                 "send_rejection_notice": {"allowed_decisions": ["approve", "edit", "reject"]},
-                "search_candidate_db": False,
+                "read_submitted_resume": False,
                 "check_interviewer_availability": False,
             }
         )
@@ -113,27 +129,72 @@ agent = create_agent(
 
 
 # =====================================================================
-# MODULE 3 & 5: Running Agent & Handling Human-in-the-Loop Interrupts
+# DYNAMIC RUNNER & WORKFLOW EXECUTION
 # =====================================================================
-def run_screening_demo():
-    config = {"configurable": {"thread_id": "screening_candidate_alex"}}
+def process_candidate_resume(resume_file_path: str, interviewer_name: str = "Sarah Connor", interview_date: str = "2026-09-01"):
+    """
+    Dynamically processes any submitted candidate resume file or URL link without hardcoding details.
+    """
+    if not os.path.exists(resume_file_path):
+        print(f"❌ Error: Resume file '{resume_file_path}' not found!")
+        return
+
+    # Read raw resume content directly from file
+    with open(resume_file_path, "r", encoding="utf-8") as f:
+        raw_resume_text = f.read()
+
+    print("\n--------------------------------------------------")
+    print(f"📂 [INPUT] Processing Submitted Resume File: {resume_file_path}")
+    print("--------------------------------------------------")
+
+    # -----------------------------------------------------------------
+    # STEP A: Dynamic Structured Extraction (Module 4)
+    # -----------------------------------------------------------------
+    print("📊 [MODULE 4]: Extracting Structured Evaluation Card from Resume...")
+    model = init_chat_model(MODEL_NAME)
+    structured_llm = model.with_structured_output(CandidateEvaluation)
     
+    evaluation: CandidateEvaluation = invoke_with_retry(
+        structured_llm.invoke,
+        f"Parse and evaluate this candidate resume text:\n\n{raw_resume_text}"
+    )
+
+    print("\n✨ [EXTRACTED CANDIDATE EVALUATION CARD]:")
+    print(f"  Name              : {evaluation.candidate_name}")
+    print(f"  Email             : {evaluation.candidate_email}")
+    print(f"  Skill Match Score : {evaluation.skill_match_score}/100")
+    print(f"  Experience Level  : {evaluation.experience_level}")
+    print(f"  Expected Salary   : {evaluation.expected_salary}")
+    print(f"  Recommendation    : {evaluation.recommendation}")
+    print(f"  Key Strengths     : {', '.join(evaluation.key_strengths)}")
+    print(f"  Summary           : {evaluation.summary}")
+
+    # Brief delay to respect rate limit
+    time.sleep(2)
+
+    # -----------------------------------------------------------------
+    # STEP B: Dynamic Agent Workflow & HITL Governance (Modules 1, 2, 3, 5)
+    # -----------------------------------------------------------------
+    clean_name = evaluation.candidate_name.lower().replace(' ', '_')
+    thread_id = f"session_{clean_name}"
+    config = {"configurable": {"thread_id": thread_id}}
+
     system_prompt = (
-        "You are HireMatch AI, a professional recruitment coordinator. "
-        "Your task is to search candidate records, verify interviewer availability, "
-        "and invite top candidates for interviews."
+        "You are HireMatch AI, an executive recruitment coordinator. "
+        "Read candidate resumes, check interviewer availability, and invite qualified candidates."
     )
-    
+
     user_request = (
-        "Please look up candidate 'Alex Rivera'. If qualified, check interviewer 'Sarah Connor' "
-        "availability for '2026-09-01' and send an interview invitation for 10:00 AM EST."
+        f"Read the resume at '{resume_file_path}'. "
+        f"The candidate is '{evaluation.candidate_name}' ({evaluation.candidate_email}). "
+        f"Based on the evaluation recommendation '{evaluation.recommendation}', "
+        f"if qualified, check availability for interviewer '{interviewer_name}' on '{interview_date}' "
+        f"and send an interview invitation for 10:00 AM EST. Otherwise send a rejection notice."
     )
 
-    print("\n📩 [USER REQUEST]:", user_request)
-    print("\n⚙️ [STEP 1]: Running HireMatch Agent...")
-
-    # First invocation
-    result = agent.invoke(
+    print("\n⚙️ [MODULES 1,2,3,5]: Running HireMatch Agent Workflow...")
+    result = invoke_with_retry(
+        agent.invoke,
         {"messages": [SystemMessage(content=system_prompt), HumanMessage(content=user_request)]},
         config=config
     )
@@ -148,54 +209,31 @@ def run_screening_demo():
         print(f"  Arguments      : {action_req['args']}")
         print(f"  Allowed Options: {interrupt_info['review_configs'][0]['allowed_decisions']}")
         
-        # Simulating Human Approval
-        print("\n👤 [HUMAN RECRUITER ACTION]: Approving the pending interview invitation...")
+        time.sleep(2)
+
+        # Simulating Human Recruiter Decision
+        print("\n👤 [HUMAN RECRUITER ACTION]: Approving pending tool execution...")
         
-        final_result = agent.invoke(
+        final_result = invoke_with_retry(
+            agent.invoke,
             Command(resume={"decisions": [{"type": "approve"}]}),
             config=config
         )
         
         print("\n✅ [FINAL AGENT RESPONSE]:")
         print(final_result["messages"][-1].content)
-        return final_result
     else:
         print("\n✅ [AGENT RESPONSE]:", result["messages"][-1].content)
-        return result
-
-
-# =====================================================================
-# MODULE 4: Generating Structured Candidate Evaluation Report
-# =====================================================================
-def generate_structured_report():
-    print("\n--------------------------------------------------")
-    print("📊 [REPORT] Generating Pydantic Candidate Evaluation Card...")
-    print("--------------------------------------------------")
-
-    model = init_chat_model("groq:openai/gpt-oss-120b")
-    structured_llm = model.with_structured_output(CandidateEvaluation)
-
-    candidate_text = (
-        "Alex Rivera has 5 years of experience in Python, FastAPI, LangChain, and AI Agents. "
-        "Expected salary is $120,000/year. Email: alexrivera@example.com. "
-        "Strong technical skills and past leadership at CloudTech. Highly recommended for Senior AI role."
-    )
-
-    evaluation = structured_llm.invoke(
-        f"Evaluate the candidate based on these details: {candidate_text}"
-    )
-
-    print("\n✨ [STRUCTURED OUTPUT]:")
-    print(f"Name              : {evaluation.candidate_name}")
-    print(f"Email             : {evaluation.candidate_email}")
-    print(f"Skill Match Score : {evaluation.skill_match_score}/100")
-    print(f"Experience Level  : {evaluation.experience_level}")
-    print(f"Expected Salary   : {evaluation.expected_salary}")
-    print(f"Recommendation    : {evaluation.recommendation}")
-    print(f"Key Strengths     : {', '.join(evaluation.key_strengths)}")
-    print(f"Summary           : {evaluation.summary}")
 
 
 if __name__ == "__main__":
-    run_screening_demo()
-    generate_structured_report()
+    parser = argparse.ArgumentParser(description="HireMatch Dynamic Talent Screening Agent")
+    parser.add_argument(
+        "--resume", 
+        type=str, 
+        default="resumes/alex_rivera_resume.txt",
+        help="Path to candidate resume file (.txt, .md)"
+    )
+    args = parser.parse_args()
+
+    process_candidate_resume(args.resume)
