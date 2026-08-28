@@ -4,7 +4,7 @@ Mini Project 1 (LangChain): HireMatch - Automated Talent Screening & Interview C
 Dynamic & Non-Hardcoded Architecture:
   - Dynamically parses submitted resume files (.txt, .md) or URL links.
   - Dynamically extracts CandidateEvaluation Pydantic structured output from actual resume text.
-  - Controls actions (Interview Invitations, Rejection Notices) via Human-In-The-Loop Middleware.
+  - Interactive Human-In-The-Loop Middleware: Terminal prompts human recruiter to Approve, Edit, or Reject tool calls!
 """
 
 import os
@@ -31,12 +31,18 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
 # =====================================================================
-# MODULE 1: Environment Setup
+# PATH RESOLUTION & ENVIRONMENT SETUP
 # =====================================================================
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+
+# Load .env from project root or current folder
+load_dotenv(dotenv_path=os.path.join(PROJECT_ROOT, ".env"))
 load_dotenv()
 os.environ["GROQ_API_KEY"] = os.getenv("GROQ_API_KEY", "")
 
 MODEL_NAME = "groq:openai/gpt-oss-120b"
+DEFAULT_RESUME_PATH = os.path.join(PROJECT_ROOT, "resumes", "alex_rivera_resume.txt")
 
 
 def invoke_with_retry(invoke_func, *args, **kwargs):
@@ -61,13 +67,19 @@ def invoke_with_retry(invoke_func, *args, **kwargs):
 @tool
 def read_submitted_resume(file_path_or_url: str) -> str:
     """Read and parse candidate resume text from a submitted file path or URL link."""
-    if os.path.exists(file_path_or_url):
+    target_path = file_path_or_url
+    if not os.path.exists(target_path):
+        alt_path = os.path.join(PROJECT_ROOT, file_path_or_url)
+        if os.path.exists(alt_path):
+            target_path = alt_path
+
+    if os.path.exists(target_path):
         try:
-            with open(file_path_or_url, "r", encoding="utf-8") as f:
+            with open(target_path, "r", encoding="utf-8") as f:
                 content = f.read()
-            return f"--- RESUME CONTENT ({file_path_or_url}) ---\n{content}"
+            return f"--- RESUME CONTENT ({target_path}) ---\n{content}"
         except Exception as e:
-            return f"Error reading resume file {file_path_or_url}: {str(e)}"
+            return f"Error reading resume file {target_path}: {str(e)}"
     else:
         return f"Resume input received: {file_path_or_url}"
 
@@ -129,22 +141,34 @@ agent = create_agent(
 
 
 # =====================================================================
-# DYNAMIC RUNNER & WORKFLOW EXECUTION
+# DYNAMIC RUNNER & INTERACTIVE WORKFLOW EXECUTION
 # =====================================================================
-def process_candidate_resume(resume_file_path: str, interviewer_name: str = "Sarah Connor", interview_date: str = "2026-09-01"):
+def process_candidate_resume(
+    resume_file_path: str, 
+    interviewer_name: str = "Sarah Connor", 
+    interview_date: str = "2026-09-01",
+    auto_approve: bool = False
+):
     """
     Dynamically processes any submitted candidate resume file or URL link without hardcoding details.
+    Prompts human recruiter interactively in terminal for approval, edit, or rejection.
     """
-    if not os.path.exists(resume_file_path):
+    target_file = resume_file_path
+    if not os.path.exists(target_file):
+        alt_path = os.path.join(PROJECT_ROOT, resume_file_path)
+        if os.path.exists(alt_path):
+            target_file = alt_path
+
+    if not os.path.exists(target_file):
         print(f"❌ Error: Resume file '{resume_file_path}' not found!")
         return
 
     # Read raw resume content directly from file
-    with open(resume_file_path, "r", encoding="utf-8") as f:
+    with open(target_file, "r", encoding="utf-8") as f:
         raw_resume_text = f.read()
 
     print("\n--------------------------------------------------")
-    print(f"📂 [INPUT] Processing Submitted Resume File: {resume_file_path}")
+    print(f"📂 [INPUT] Processing Submitted Resume File: {target_file}")
     print("--------------------------------------------------")
 
     # -----------------------------------------------------------------
@@ -185,7 +209,7 @@ def process_candidate_resume(resume_file_path: str, interviewer_name: str = "Sar
     )
 
     user_request = (
-        f"Read the resume at '{resume_file_path}'. "
+        f"Read the resume at '{target_file}'. "
         f"The candidate is '{evaluation.candidate_name}' ({evaluation.candidate_email}). "
         f"Based on the evaluation recommendation '{evaluation.recommendation}', "
         f"if qualified, check availability for interviewer '{interviewer_name}' on '{interview_date}' "
@@ -201,22 +225,58 @@ def process_candidate_resume(resume_file_path: str, interviewer_name: str = "Sar
 
     # Check for Human-In-The-Loop Interrupt
     if "__interrupt__" in result:
-        print("\n⚠️ [HUMAN-IN-THE-LOOP INTERRUPT DETECTED]")
+        print("\n==================================================")
+        print("⚠️ [HUMAN-IN-THE-LOOP INTERRUPT TRIGGERED]")
         interrupt_info = result["__interrupt__"][0].value
         action_req = interrupt_info["action_requests"][0]
         
-        print(f"  Pending Action : {action_req['name']}")
-        print(f"  Arguments      : {action_req['args']}")
-        print(f"  Allowed Options: {interrupt_info['review_configs'][0]['allowed_decisions']}")
+        print(f"  Action Request : {action_req['name']}")
+        print(f"  Target Arguments: {action_req['args']}")
+        print(f"  Allowed Decisions: {interrupt_info['review_configs'][0]['allowed_decisions']}")
+        print("==================================================")
+        
+        # Interactive Decision Prompt (Terminal CLI)
+        if sys.stdin.isatty() and not auto_approve:
+            print("\n👤 HUMAN RECRUITER DECISION REQUIRED:")
+            print("   1. Type 'approve' to send the email as requested.")
+            print("   2. Type 'reject'  to block sending the email.")
+            print("   3. Type 'edit'    to modify recipient, subject, or slot before sending.")
+            
+            choice = input("\n👉 Enter your decision [approve/edit/reject] (default: approve): ").strip().lower()
+            if not choice:
+                choice = "approve"
+            
+            if choice == "reject":
+                reason = input("Enter rejection reason for candidate (optional): ").strip()
+                decision_payload = {"type": "reject", "message": reason if reason else "Recruiter rejected tool execution."}
+                print("\n🚫 [HUMAN RECRUITER DECISION]: REJECTED sending email.")
+            elif choice == "edit":
+                print("\n✏️  [EDITING TOOL ARGUMENTS]:")
+                edited_args = dict(action_req['args'])
+                for k, v in edited_args.items():
+                    new_val = input(f"   Change {k} (current: '{v}'): ").strip()
+                    if new_val:
+                        edited_args[k] = new_val
+                decision_payload = {
+                    "type": "edit",
+                    "edited_action": {
+                        "name": action_req["name"],
+                        "args": edited_args
+                    }
+                }
+                print(f"\n✏️  [HUMAN RECRUITER DECISION]: EDITED action -> {edited_args}")
+            else:
+                decision_payload = {"type": "approve"}
+                print("\n✅ [HUMAN RECRUITER DECISION]: APPROVED sending email.")
+        else:
+            print("\n👤 [HUMAN RECRUITER DECISION]: Auto-approving pending tool execution...")
+            decision_payload = {"type": "approve"}
         
         time.sleep(2)
 
-        # Simulating Human Recruiter Decision
-        print("\n👤 [HUMAN RECRUITER ACTION]: Approving pending tool execution...")
-        
         final_result = invoke_with_retry(
             agent.invoke,
-            Command(resume={"decisions": [{"type": "approve"}]}),
+            Command(resume={"decisions": [decision_payload]}),
             config=config
         )
         
@@ -231,9 +291,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--resume", 
         type=str, 
-        default="resumes/alex_rivera_resume.txt",
+        default=DEFAULT_RESUME_PATH,
         help="Path to candidate resume file (.txt, .md)"
+    )
+    parser.add_argument(
+        "--auto-approve",
+        action="store_true",
+        help="Skip interactive prompt and auto-approve pending tool executions"
     )
     args = parser.parse_args()
 
-    process_candidate_resume(args.resume)
+    process_candidate_resume(args.resume, auto_approve=args.auto-approve)
