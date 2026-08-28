@@ -279,9 +279,32 @@ def process_candidate_resume(
             Command(resume={"decisions": [decision_payload]}),
             config=config
         )
-        
+
+        # Find last non-empty message content
+        final_content = ""
+        for msg in reversed(final_result.get("messages", [])):
+            content = getattr(msg, "content", "")
+            if isinstance(content, str) and content.strip():
+                final_content = content.strip()
+                break
+            elif isinstance(content, list):
+                # Handle list-type content (e.g. tool use blocks)
+                text_parts = [c.get("text", "") for c in content if isinstance(c, dict) and c.get("text")]
+                if text_parts:
+                    final_content = " ".join(text_parts).strip()
+                    break
+
         print("\n✅ [FINAL AGENT RESPONSE]:")
-        print(final_result["messages"][-1].content)
+        if final_content:
+            print(final_content)
+        elif choice == "reject":
+            print(f"🚫 Email was blocked by recruiter. Reason: {decision_payload.get('message', 'N/A')}")
+            print(f"   Candidate '{evaluation.candidate_name}' ({evaluation.candidate_email}) will NOT be contacted.")
+        elif choice == "edit":
+            edited = decision_payload.get("edited_action", {}).get("args", {})
+            print(f"✏️  Email was sent with edited details: {edited}")
+        else:
+            print("✅ Action was approved and executed successfully.")
     else:
         print("\n✅ [AGENT RESPONSE]:", result["messages"][-1].content)
 
